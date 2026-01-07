@@ -1,0 +1,17 @@
+[project]
+name = "fleet-spec-sheet"
+version = "0.1.0"
+description = "Generate fleet vehicle instruction/spec sheets"
+requires-python = ">=3.10"
+dependencies = [
+  "pymupdf>=1.23",
+  "Pillow>=10.0",
+  "reportlab>=4.0",
+]
+
+[project.scripts]
+fleet-spec = "fleet_spec_sheet.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
