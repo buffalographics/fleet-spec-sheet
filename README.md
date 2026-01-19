@@ -52,3 +52,83 @@ cd /Users/printstation/Downloads/fleet-spec-sheet
 python3 -m venv .venv
 source .venv/bin/activate
 pip install pymupdf pillow reportlab
+```
+
+---
+
+## Usage (Recommended: GUI)
+
+### GUI workflow
+```bash
+source .venv/bin/activate
+python main.py --gui
+```
+
+GUI order:
+1. DETAILS (single dialog with Customer + Vehicle)
+2. Select PROOF image
+3. Select PRINT folder (opens in the proof’s folder)
+4. Font prompt only if `assets/HudsonNY.ttf` is missing
+5. Save PDF (defaults to proof’s folder with auto filename)
+
+---
+
+## Usage (CLI)
+
+You can run without the GUI if you want to script it.
+
+```bash
+source .venv/bin/activate
+
+python main.py \
+  --print-dir "/path/to/PRINT" \
+  --proof "/path/to/PROOF.png" \
+  --out "/path/to/output/Spec_Sheet.pdf" \
+  --customer "AM Corp (American Materials Corporation)" \
+  --vehicle "MIXER TRUCK"
+```
+
+Font defaults to `assets/HudsonNY.ttf`. If you store it elsewhere:
+```bash
+python main.py --font "/path/to/HudsonNY.ttf" ...
+```
+
+---
+
+## Project Structure
+
+Recommended:
+```
+fleet-spec-sheet/
+  main.py
+  assets/
+    HudsonNY.ttf
+  README.md
+```
+
+---
+
+## Troubleshooting
+
+### “tkinter is not available”
+You’re running a Python build without Tk support.
+
+Quick check:
+```bash
+python3 -c "import tkinter; print('ok')"
+```
+
+If it fails, use a Python that includes Tk (commonly the system Python on macOS, or a python.org installer build). Alternatively, run CLI mode.
+
+### “No PDFs found in PRINT after filtering”
+- Confirm the PRINT folder contains PDFs
+- Confirm they aren’t all inside ignored “unit number” folders
+- Confirm the PDFs open normally
+
+---
+
+## Roadmap (optional)
+- Remember last Customer/Vehicle (settings persistence)
+- Autosave mode (no Save dialog)
+- macOS double-click launcher (.app)
+- Multi-page manifest when PRINT list is long
