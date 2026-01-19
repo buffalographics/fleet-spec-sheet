@@ -1,4 +1,4 @@
-# Fleet Spec Sheet Generator (Buffalo Graphics)
+# Fleet Spec Sheet Generator (Buffalo Graphics) — V1
 
 Generates a one-page PDF “spec sheet” for fleet vehicle production + install.
 
@@ -132,3 +132,13 @@ If it fails, use a Python that includes Tk (commonly the system Python on macOS,
 - Autosave mode (no Save dialog)
 - macOS double-click launcher (.app)
 - Multi-page manifest when PRINT list is long
+
+---
+
+## Version
+
+**V1** — Initial production-ready release  
+- Locked layout and formatting  
+- GUI-driven daily workflow  
+- Manual unit number (handwritten)  
+- Stable ruleset for PRINT parsing  
