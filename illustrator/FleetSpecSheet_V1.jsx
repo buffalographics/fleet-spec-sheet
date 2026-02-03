@@ -1,49 +1,41 @@
-/*
+/* 
 Fleet Spec Sheet Generator — Illustrator (V1)
-- Builds spec sheet artboard(s) INSIDE the active document.
-- Sources PROOF + PRINT items from ARTBOARDS (no file paths).
-- Prompts only for: Customer + Vehicle (single dialog, 2 fields).
-- Vehicle Unit # always blank for handwriting.
-- HudsonNY font everywhere (falls back if missing).
+
+V1 improvements:
+- No temp export PNGs / no tmp layers.
+- Build thumbnails + proof by duplicating artwork from source artboards directly.
+- Rasterize any linked/placed artwork used in the spec sheet.
+- Update in-place: re-run updates the existing SPEC SHEET (V1) artboard + layer.
+- Pagination dropped: always expand spec-sheet artboard height so nothing hangs off.
 
 Artboard rules:
-- Proof artboard name: "PROOF" or "MOCKUP" (case-insensitive) = proof image
-- Ignored artboards (case-insensitive): names matching "unit number", "unit numbers", "unit #", "unit no"
-- All other artboards become Print Manifest rows
-- Qty parsing from artboard name: QTY2, QTY_2, QTY-2, QTY 2, x2, 2x
+- Proof artboard name contains: PROOF or MOCKUP (case-insensitive)
+- Ignored artboards:
+  - name contains 'unit' anywhere (case-insensitive)
+  - OR name is pure digits (e.g. '4519')
+- Qty parsing: QTY2, QTY_2, QTY-2, QTY 2, x2, 2x
 */
 
 (function () {
-  if (app.documents.length === 0) {
-    alert("Open a document first.");
-    return;
-  }
-
+  if (app.documents.length === 0) return;
   var doc = app.activeDocument;
 
-  // --- constants (points) ---
   var IN = 72;
   var PAGE_W = 8.5 * IN;
-  var PAGE_H = 11 * IN;
-  var MARGIN = 0.5 * IN;
-  var CONTENT_W = PAGE_W - 2 * MARGIN; // 7.5"
-  var X0 = MARGIN;
-  var TOP = PAGE_H - MARGIN;
-  var BOT = MARGIN;
 
-  // header
-  var HEADER_H = 0.45 * IN; // ~32pt
+  var MARGIN = 0.25 * IN;
+  var X0 = MARGIN;
+  var CONTENT_W = PAGE_W - 2 * MARGIN;
+
+  var HEADER_H = 0.45 * IN;
   var HEADER_TEXT = "BUFFALO GRAPHICS COMPANY";
 
-  // details table height
-  var DETAILS_H = 0.6 * IN; // ~43pt
+  var DETAILS_H = 0.6 * IN;
 
-  // proof box
-  var PROOF_OUTER_W = CONTENT_W; // 7.5"
-  var PROOF_INNER_W = 7.2 * IN; // 7.2"
-  var PROOF_GAP_TOP = 0.14 * IN;
+  var PROOF_OUTER_W = CONTENT_W;
+  var PROOF_INNER_W = CONTENT_W - 0.3 * IN;
 
-  // manifest
+  var MANIFEST_TITLE_H = 0.25 * IN;
   var MANIFEST_TITLE_GAP = 0.12 * IN;
   var MANIFEST_HDR_H = 0.32 * IN;
   var ROW_H = 0.85 * IN;
@@ -57,43 +49,15 @@ Artboard rules:
   var THUMB_BOX_W = 0.95 * IN;
   var THUMB_BOX_H = 0.7 * IN;
 
-  // sign-off
   var SIGN_TITLE_GAP = 0.2 * IN;
+  var SIGN_TITLE_H = 0.25 * IN;
+  var SIGN_TABLE_GAP = 0.28 * IN;
   var SIGN_H = 1.55 * IN;
 
-  // Active spec-sheet artboard origin (set per page)
-  var __AB_LEFT = 0;
-  var __AB_TOP = 0;
-
-  function toDocX(x) {
-    return __AB_LEFT + x;
+  function trim(s) {
+    return String(s || "").replace(/^\s+|\s+$/g, "");
   }
 
-  function toDocY(y) {
-    // Convert page Y (0..PAGE_H from bottom) into Illustrator document Y
-    return __AB_TOP - (PAGE_H - y);
-  }
-
-  // --- helpers ---
-  function findFontContains(substr) {
-    try {
-      var needle = String(substr || "").toLowerCase();
-      if (!needle) return null;
-      for (var i = 0; i < app.textFonts.length; i++) {
-        var f = app.textFonts[i];
-        var n = f && f.name ? String(f.name).toLowerCase() : "";
-        var fam = f && f.family ? String(f.family).toLowerCase() : "";
-        var sty = f && f.style ? String(f.style).toLowerCase() : "";
-        if (
-          n.indexOf(needle) !== -1 ||
-          fam.indexOf(needle) !== -1 ||
-          sty.indexOf(needle) !== -1
-        )
-          return f;
-      }
-    } catch (e) {}
-    return null;
-  }
   function tryFont(name) {
     try {
       return app.textFonts.getByName(name);
@@ -101,30 +65,34 @@ Artboard rules:
       return null;
     }
   }
-
+  function findFontContains(substr) {
+    try {
+      var needle = String(substr || "").toLowerCase();
+      for (var i = 0; i < app.textFonts.length; i++) {
+        var f = app.textFonts[i];
+        var n = f && f.name ? String(f.name).toLowerCase() : "";
+        var fam = f && f.family ? String(f.family).toLowerCase() : "";
+        if (n.indexOf(needle) !== -1 || fam.indexOf(needle) !== -1) return f;
+      }
+    } catch (e) {}
+    return null;
+  }
   var HUDSON =
     tryFont("HudsonNY") ||
     tryFont("Hudson NY") ||
     tryFont("HudsonNY-Regular") ||
     findFontContains("hudson");
 
-  if (!HUDSON) {
-    alert(
-      "HudsonNY font not found in Illustrator. Install/activate the font, then restart Illustrator.\n\n" +
-        "Using default font for now."
-    );
-  }
-
-  function setText(tf, size, colorRGB, fontObj) {
+  function setText(tf, size, rgb, fontObj) {
     var tr = tf.textRange;
     tr.characterAttributes.size = size;
     if (fontObj) tr.characterAttributes.textFont = fontObj;
     else if (HUDSON) tr.characterAttributes.textFont = HUDSON;
-    if (colorRGB) {
+    if (rgb) {
       var c = new RGBColor();
-      c.red = colorRGB[0];
-      c.green = colorRGB[1];
-      c.blue = colorRGB[2];
+      c.red = rgb[0];
+      c.green = rgb[1];
+      c.blue = rgb[2];
       tr.characterAttributes.fillColor = c;
     }
   }
@@ -139,7 +107,6 @@ Artboard rules:
     item.strokeColor = c;
     item.filled = false;
   }
-
   function fillBlack(item) {
     item.filled = true;
     var c = new RGBColor();
@@ -150,16 +117,14 @@ Artboard rules:
     item.stroked = false;
   }
 
-  function addRect(layer, x, yTop, w, h, fill) {
-    // Illustrator rect uses (left, top, width, height)
-    var r = layer.pathItems.rectangle(yTop, x, w, h);
+  function addRect(container, left, top, w, h, fill) {
+    var r = container.pathItems.rectangle(top, left, w, h);
     if (fill) fillBlack(r);
     else strokeBlack(r, 1);
     return r;
   }
-
-  function addLine(layer, x1, y1, x2, y2) {
-    var ln = layer.pathItems.add();
+  function addLine(container, x1, y1, x2, y2) {
+    var ln = container.pathItems.add();
     ln.setEntirePath([
       [x1, y1],
       [x2, y2],
@@ -167,29 +132,34 @@ Artboard rules:
     strokeBlack(ln, 1);
     return ln;
   }
-
-  function addText(layer, x, yTop, w, h, s, size, rgb, fontObj, align) {
-    // Use AREA TEXT so width/height are valid (point text cannot set width/height)
-    var box = layer.pathItems.rectangle(yTop, x, w, h);
+  function addAreaText(
+    container,
+    left,
+    top,
+    w,
+    h,
+    s,
+    size,
+    rgb,
+    fontObj,
+    justify,
+  ) {
+    var box = container.pathItems.rectangle(top, left, w, h);
     box.stroked = false;
     box.filled = false;
-
-    var tf = layer.textFrames.areaText(box);
+    var tf = container.textFrames.areaText(box);
     tf.contents = s;
-
     setText(tf, size, rgb, fontObj);
-
-    if (align) {
+    if (justify) {
       try {
-        tf.textRange.paragraphAttributes.justification = align;
+        tf.textRange.paragraphAttributes.justification = justify;
       } catch (e) {}
     }
-
     return tf;
   }
 
   function parseQty(name) {
-    var n = name;
+    var n = String(name || "");
     var m;
     m = n.match(/(?:^|[_\-\s])qty(?:[_\-\s]*)(\d+)(?:[_\-\s\.]|$)/i);
     if (m) return parseInt(m[1], 10);
@@ -200,53 +170,73 @@ Artboard rules:
     return 1;
   }
 
-  function isIgnoredArtboard(name) {
-    return /unit\s*(number|numbers|#|no\.?)/i.test(name);
-  }
-
   function isProofArtboard(name) {
-    return (
-      /^\s*(proof|mockup)\s*$/i.test(name) ||
-      /(^|\s)(proof|mockup)($|\s)/i.test(name)
-    );
+    var n = String(name || "");
+    return /proof/i.test(n) || /mockup/i.test(n);
+  }
+  function isIgnoredArtboard(name) {
+    if (!name) return false;
+    var n = trim(String(name));
+    n = n.replace(/^\s*\d+\s*([\-\._]|\u2013|\u2014)\s*/g, "");
+    n = n.replace(/^\s*\d+\s+/, "");
+    if (/unit/i.test(n)) return true;
+    if (/^\d+$/.test(n)) return true;
+    return false;
   }
 
-  function exportArtboardPNG(doc, abIndex, outFile) {
-    var prev = doc.artboards.getActiveArtboardIndex();
-    doc.artboards.setActiveArtboardIndex(abIndex);
-
-    var opt = new ExportOptionsPNG24();
-    opt.antiAliasing = true;
-    opt.transparency = true;
-    opt.artBoardClipping = true;
-    opt.horizontalScale = 200; // percent
-    opt.verticalScale = 200;
-
-    doc.exportFile(outFile, ExportType.PNG24, opt);
-    doc.artboards.setActiveArtboardIndex(prev);
+  function getClientsSegmentsFromDocPath(docRef) {
+    try {
+      var f = null;
+      try {
+        f = docRef.fullName;
+      } catch (e0) {
+        f = null;
+      }
+      if (!f) return null;
+      var norm = String(f.fsName || f.fullName || "").replace(/\\/g, "/");
+      var parts = norm.split("/");
+      var idx = -1;
+      for (var i = 0; i < parts.length; i++) {
+        if (String(parts[i]).toLowerCase() === "clients") {
+          idx = i;
+          break;
+        }
+      }
+      if (idx === -1) return null;
+      return {
+        customer: trim(parts[idx + 1] || ""),
+        job: trim(parts[idx + 2] || ""),
+      };
+    } catch (e) {
+      return null;
+    }
   }
-
-  function fitPlacedToBox(placed, boxW, boxH) {
-    // scale to fit (keep aspect)
-    var vb = placed.visibleBounds; // [left, top, right, bottom]
-    var w = vb[2] - vb[0];
-    var h = vb[1] - vb[3];
-    if (w <= 0 || h <= 0) return;
-
-    var s = Math.min(boxW / w, boxH / h) * 100;
-    placed.resize(s, s); // percent
+  function inferCustomerFromDocPath(docRef) {
+    var seg = getClientsSegmentsFromDocPath(docRef);
+    return seg && seg.customer ? seg.customer : "";
   }
-
-  function centerPlacedInCell(placed, cellX, cellYTop, cellW, cellH) {
-    var vb = placed.visibleBounds;
-    var w = vb[2] - vb[0];
-    var h = vb[1] - vb[3];
-
-    var cx = cellX + cellW / 2;
-    var cy = cellYTop - cellH / 2;
-
-    placed.left = toDocX(cx - w / 2);
-    placed.top = toDocY(cy + h / 2);
+  function inferVehicleFromDocPath(docRef) {
+    var seg = getClientsSegmentsFromDocPath(docRef);
+    if (seg && seg.job) return seg.job;
+    try {
+      var f = null;
+      try {
+        f = docRef.fullName;
+      } catch (e0) {
+        f = null;
+      }
+      if (!f) return "";
+      var norm = String(f.fsName || f.fullName || "")
+        .replace(/\\/g, "/")
+        .toLowerCase();
+      if (/\bmixer\b|\bmixers\b|ready\s*mix|\brm\b/.test(norm)) return "MIXER";
+      if (/\bpump\b|\bboom\b/.test(norm)) return "PUMP";
+      if (/\btrailer\b/.test(norm)) return "TRAILER";
+      if (/\bdump\b/.test(norm)) return "DUMP";
+      return "";
+    } catch (e) {
+      return "";
+    }
   }
 
   function makeDetailsDialog(defaultCustomer, defaultVehicle) {
@@ -267,21 +257,195 @@ Artboard rules:
     var btns = w.add("group");
     btns.alignment = "right";
     btns.add("button", undefined, "Cancel", { name: "cancel" });
-    var ok = btns.add("button", undefined, "OK", { name: "ok" });
+    btns.add("button", undefined, "OK", { name: "ok" });
 
     customer.active = true;
     if (w.show() !== 1) return null;
 
     return {
-      customer: (customer.text || "").replace(/^\s+|\s+$/g, ""),
-      vehicle: (vehicle.text || "").replace(/^\s+|\s+$/g, "") || "MIXER",
+      customer: trim(customer.text),
+      vehicle: trim(vehicle.text) || "MIXER",
     };
   }
 
-  // --- gather artboards ---
-  var proofIdx = -1;
-  var items = []; // {name, qty, abIndex}
+  function collectPageItemsInArtboard(abIndex, excludeLayerName) {
+    var ab = doc.artboards[abIndex];
+    var r = ab.artboardRect; // [L, T, R, B]
+    var L = r[0],
+      T = r[1],
+      R = r[2],
+      B = r[3];
 
+    var res = [];
+    for (var i = 0; i < doc.pageItems.length; i++) {
+      var it = doc.pageItems[i];
+      try {
+        if (!it || it.locked || it.hidden) continue;
+        if (excludeLayerName && it.layer && it.layer.name === excludeLayerName)
+          continue;
+
+        var b = it.visibleBounds; // [l,t,r,b]
+        if (!b || b.length !== 4) continue;
+
+        var ol = Math.max(L, b[0]);
+        var ot = Math.min(T, b[1]);
+        var orr = Math.min(R, b[2]);
+        var ob = Math.max(B, b[3]);
+
+        if (orr > ol && ot > ob) res.push(it);
+      } catch (e) {}
+    }
+    return res;
+  }
+
+  function duplicateArtboardArtworkToGroup(
+    abIndex,
+    targetGroup,
+    excludeLayerName,
+  ) {
+    var arr = collectPageItemsInArtboard(abIndex, excludeLayerName);
+    for (var i = 0; i < arr.length; i++) {
+      try {
+        arr[i].duplicate(targetGroup, ElementPlacement.PLACEATEND);
+      } catch (e) {}
+    }
+  }
+
+  function fitGroupToBox(group, boxW, boxH) {
+    var vb = group.visibleBounds; // [L,T,R,B]
+    var w = vb[2] - vb[0];
+    var h = vb[1] - vb[3];
+    if (w <= 0 || h <= 0) return;
+
+    var s = Math.min(boxW / w, boxH / h) * 100;
+    group.resize(s, s, true, true, true, true, s, Transformation.CENTER);
+  }
+
+  function centerGroupInBox(group, boxLeft, boxTop, boxW, boxH) {
+    var vb = group.visibleBounds;
+    var w = vb[2] - vb[0];
+    var h = vb[1] - vb[3];
+
+    var cx = boxLeft + boxW / 2;
+    var cy = boxTop - boxH / 2;
+
+    var curL = vb[0];
+    var curT = vb[1];
+
+    var targetL = cx - w / 2;
+    var targetT = cy + h / 2;
+
+    group.translate(targetL - curL, targetT - curT);
+  }
+
+  function rasterizeItem(item) {
+    try {
+      if (!item) return null;
+      var vb = item.visibleBounds;
+      if (!vb || vb.length !== 4) return null;
+
+      var ro = new RasterizeOptions();
+      ro.resolution = 300;
+      ro.antiAliasingMethod = AntiAliasingMethod.ARTOPTIMIZED;
+      ro.transparency = true;
+      ro.backgroundBlack = false;
+      try {
+        ro.convertSpotColors = false;
+      } catch (e0) {}
+
+      var r = doc.rasterize(item, vb, ro);
+      try {
+        item.remove();
+      } catch (e1) {}
+      return r;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getOrCreateSpecArtboard() {
+    for (var i = 0; i < doc.artboards.length; i++) {
+      if (String(doc.artboards[i].name || "").indexOf("SPEC SHEET (V1)") === 0)
+        return i;
+    }
+
+    var maxRight = -1e12,
+      topAlign = doc.artboards[0].artboardRect[1];
+    for (var j = 0; j < doc.artboards.length; j++) {
+      var rr = doc.artboards[j].artboardRect;
+      if (rr[2] > maxRight) maxRight = rr[2];
+    }
+    var gap = 0.5 * IN;
+    var left = maxRight + gap;
+    var top = topAlign;
+    var rect = [left, top, left + PAGE_W, top - 11 * IN];
+    var idx = doc.artboards.length;
+    try {
+      doc.artboards.add(rect);
+      idx = doc.artboards.length - 1;
+    } catch (e1) {
+      var minBottom = 1e12,
+        leftAlign = doc.artboards[0].artboardRect[0];
+      for (var k = 0; k < doc.artboards.length; k++) {
+        var rr2 = doc.artboards[k].artboardRect;
+        if (rr2[3] < minBottom) minBottom = rr2[3];
+      }
+      var top2 = minBottom - gap;
+      var rect2 = [leftAlign, top2, leftAlign + PAGE_W, top2 - 11 * IN];
+      doc.artboards.add(rect2);
+      idx = doc.artboards.length - 1;
+    }
+    try {
+      doc.artboards[idx].name = "SPEC SHEET (V1)";
+    } catch (eName) {}
+    return idx;
+  }
+
+  function getOrCreateSpecLayer() {
+    for (var i = 0; i < doc.layers.length; i++) {
+      if (doc.layers[i].name === "SPEC SHEET (V1)") return doc.layers[i];
+    }
+    var lyr = doc.layers.add();
+    lyr.name = "SPEC SHEET (V1)";
+    return lyr;
+  }
+
+  function clearLayer(layer) {
+    try {
+      for (var i = layer.pageItems.length - 1; i >= 0; i--) {
+        try {
+          layer.pageItems[i].remove();
+        } catch (e1) {}
+      }
+      for (var j = layer.layers.length - 1; j >= 0; j--) {
+        try {
+          layer.layers[j].remove();
+        } catch (e2) {}
+      }
+    } catch (e) {}
+  }
+
+  function expandArtboardToFitContent(abIdx, contentGroup) {
+    try {
+      var ab = doc.artboards[abIdx];
+      if (!ab) return;
+      var r = ab.artboardRect;
+      var b = contentGroup.visibleBounds;
+      if (!b || b.length !== 4) return;
+
+      var pad = 0.25 * IN;
+      var newL = r[0];
+      var newR = r[0] + PAGE_W;
+      var newT = r[1];
+      var newB = Math.min(r[3], b[3] - pad);
+
+      ab.artboardRect = [newL, newT, newR, newB];
+    } catch (e) {}
+  }
+
+  // Gather artboards
+  var proofIdx = -1;
+  var items = [];
   for (var i = 0; i < doc.artboards.length; i++) {
     var abName = doc.artboards[i].name || "Artboard " + (i + 1);
     if (isIgnoredArtboard(abName)) continue;
@@ -291,635 +455,447 @@ Artboard rules:
       continue;
     }
 
-    items.push({
-      abIndex: i,
-      name: abName,
-      qty: parseQty(abName),
-    });
+    items.push({ abIndex: i, name: abName, qty: parseQty(abName) });
   }
+  if (proofIdx === -1 || items.length === 0) return;
 
-  if (proofIdx === -1) {
-    alert('No proof artboard found. Name an artboard "PROOF" or "MOCKUP".');
-    return;
-  }
-
-  if (items.length === 0) {
-    alert("No print artboards found (besides PROOF/MOCKUP).");
-    return;
-  }
-
-  // --- prompt details (DETAILS -> PROOF -> PRINT is irrelevant now since artboards are the source) ---
-  var details = makeDetailsDialog("", "MIXER");
+  // Details prompt
+  var inferredCustomer = inferCustomerFromDocPath(doc);
+  var inferredVehicle = inferVehicleFromDocPath(doc) || "MIXER";
+  var details = makeDetailsDialog(inferredCustomer, inferredVehicle);
   if (!details) return;
 
-  // --- temp exports ---
-  var tmpFolder = Folder(Folder.temp.fsName + "/fleet_spec_sheet_ai_v1");
-  if (!tmpFolder.exists) tmpFolder.create();
+  // Build/update
+  var specAbIdx = getOrCreateSpecArtboard();
+  var specLayer = getOrCreateSpecLayer();
+  clearLayer(specLayer);
 
-  var proofFile = File(tmpFolder.fsName + "/proof.png");
-  exportArtboardPNG(doc, proofIdx, proofFile);
+  doc.artboards.setActiveArtboardIndex(specAbIdx);
+  var abRect = doc.artboards[specAbIdx].artboardRect;
+  var AB_L = abRect[0];
+  var AB_T = abRect[1];
 
-  // Export thumbnails for each print artboard
-  for (var t = 0; t < items.length; t++) {
-    items[t].png = File(tmpFolder.fsName + "/thumb_" + (t + 1) + ".png");
-    exportArtboardPNG(doc, items[t].abIndex, items[t].png);
+  var root = specLayer.groupItems.add();
+  root.name = "__spec_sheet_root__";
+
+  var y = AB_T;
+  var headerTop = AB_T;
+  var pageLeft = AB_L;
+
+  // Header full width, flush top
+  addRect(root, pageLeft, headerTop, PAGE_W, HEADER_H, true);
+  addAreaText(
+    root,
+    pageLeft + 0.18 * IN,
+    headerTop - 0.12 * IN,
+    PAGE_W - 0.36 * IN,
+    HEADER_H,
+    HEADER_TEXT,
+    14,
+    [255, 255, 255],
+    HUDSON,
+  );
+
+  y = headerTop - HEADER_H - 0.12 * IN;
+
+  // Details
+  var tableLeft = pageLeft + X0;
+  var tableTop = y;
+  var tableW = CONTENT_W;
+  var rowH = DETAILS_H / 2;
+
+  addRect(root, tableLeft, tableTop, tableW, DETAILS_H, false);
+  addLine(
+    root,
+    tableLeft,
+    tableTop - rowH,
+    tableLeft + tableW,
+    tableTop - rowH,
+  );
+
+  var c1 = 1.2 * IN,
+    c2 = 4.4 * IN,
+    c5 = 1.3 * IN,
+    c6 = 0.6 * IN;
+  addLine(root, tableLeft + c1, tableTop, tableLeft + c1, tableTop - DETAILS_H);
+  addLine(
+    root,
+    tableLeft + c1 + c2,
+    tableTop - rowH,
+    tableLeft + c1 + c2,
+    tableTop - DETAILS_H,
+  );
+  addLine(
+    root,
+    tableLeft + tableW - (c5 + c6),
+    tableTop - rowH,
+    tableLeft + tableW - (c5 + c6),
+    tableTop - DETAILS_H,
+  );
+  addLine(
+    root,
+    tableLeft + tableW - c6,
+    tableTop - rowH,
+    tableLeft + tableW - c6,
+    tableTop - DETAILS_H,
+  );
+
+  addAreaText(
+    root,
+    tableLeft + 0.08 * IN,
+    tableTop - 0.14 * IN,
+    c1 - 0.16 * IN,
+    rowH,
+    "CUSTOMER:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  addAreaText(
+    root,
+    tableLeft + c1 + 0.08 * IN,
+    tableTop - 0.14 * IN,
+    tableW - c1 - 0.16 * IN,
+    rowH,
+    details.customer,
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+
+  var row2Top = tableTop - rowH;
+  addAreaText(
+    root,
+    tableLeft + 0.08 * IN,
+    row2Top - 0.14 * IN,
+    c1 - 0.16 * IN,
+    rowH,
+    "VEHICLE:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  addAreaText(
+    root,
+    tableLeft + c1 + 0.08 * IN,
+    row2Top - 0.14 * IN,
+    c2 - 0.16 * IN,
+    rowH,
+    details.vehicle,
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  addAreaText(
+    root,
+    tableLeft + tableW - (c5 + c6) + 0.08 * IN,
+    row2Top - 0.14 * IN,
+    c5 - 0.16 * IN,
+    rowH,
+    "VEHICLE UNIT #:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+
+  y = tableTop - DETAILS_H - 0.18 * IN;
+
+  // Proof
+  var proofTop = y;
+  var proofGroup = root.groupItems.add();
+  proofGroup.name = "__proof_group__";
+  duplicateArtboardArtworkToGroup(proofIdx, proofGroup, "SPEC SHEET (V1)");
+  fitGroupToBox(proofGroup, PROOF_INNER_W, 1000 * IN);
+
+  var pvb = proofGroup.visibleBounds;
+  var pW = pvb[2] - pvb[0];
+  var pH = pvb[1] - pvb[3];
+
+  var proofBoxLeft = pageLeft + X0;
+  var proofInnerLeft = proofBoxLeft + (PROOF_OUTER_W - pW) / 2;
+  proofGroup.translate(proofInnerLeft - pvb[0], proofTop - pvb[1]);
+  rasterizeItem(proofGroup);
+  addRect(root, proofBoxLeft, proofTop, PROOF_OUTER_W, pH, false);
+
+  y = proofTop - pH - 0.18 * IN;
+
+  // Manifest title
+  addAreaText(
+    root,
+    pageLeft + X0,
+    y,
+    CONTENT_W,
+    MANIFEST_TITLE_H,
+    "PRINT MANIFEST",
+    11,
+    [0, 0, 0],
+    HUDSON,
+  );
+  addLine(
+    root,
+    pageLeft + X0,
+    y - 0.2 * IN,
+    pageLeft + X0 + 1.7 * IN,
+    y - 0.2 * IN,
+  );
+  y -= MANIFEST_TITLE_H;
+  y -= MANIFEST_TITLE_GAP;
+
+  // Manifest header row
+  var tX = pageLeft + X0;
+  var tY = y;
+  var tW = CONTENT_W;
+
+  addRect(root, tX, tY, tW, MANIFEST_HDR_H, false);
+
+  var cols = [COL_W.thumb, COL_W.name, COL_W.file, COL_W.qty, COL_W.done];
+  var cx = tX;
+  for (var c = 0; c < cols.length - 1; c++) {
+    cx += cols[c];
+    addLine(root, cx, tY, cx, tY - MANIFEST_HDR_H);
   }
 
-  // --- create spec sheet artboards (pagination if needed) ---
-  // Determine how many rows fit on first page (includes proof + signoff)
-  function layoutCapacity(includeProof, includeSign) {
-    var y = TOP;
+  var hx = tX;
+  addAreaText(
+    root,
+    hx + 0.08 * IN,
+    tY - 0.12 * IN,
+    cols[0] - 0.16 * IN,
+    MANIFEST_HDR_H,
+    "THUMBNAIL",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  hx += cols[0];
+  addAreaText(
+    root,
+    hx + 0.08 * IN,
+    tY - 0.12 * IN,
+    cols[1] - 0.16 * IN,
+    MANIFEST_HDR_H,
+    "NAME",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  hx += cols[1];
+  addAreaText(
+    root,
+    hx + 0.08 * IN,
+    tY - 0.12 * IN,
+    cols[2] - 0.16 * IN,
+    MANIFEST_HDR_H,
+    "FILE NAME",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  hx += cols[2];
+  addAreaText(
+    root,
+    hx + 0.1 * IN,
+    tY - 0.12 * IN,
+    cols[3] - 0.2 * IN,
+    MANIFEST_HDR_H,
+    "QTY",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  hx += cols[3];
+  addAreaText(
+    root,
+    hx + 0.08 * IN,
+    tY - 0.12 * IN,
+    cols[4] - 0.16 * IN,
+    MANIFEST_HDR_H,
+    "DONE",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
 
-    // header
-    y -= HEADER_H;
-    y -= 0.12 * IN;
+  y = tY - MANIFEST_HDR_H;
 
-    // details
-    y -= DETAILS_H;
-    y -= 0.14 * IN;
+  // Rows
+  for (var r = 0; r < items.length; r++) {
+    var it = items[r];
+    var rowTop = y;
 
-    // proof
-    if (includeProof) {
-      // We'll compute proof height later when placing; here reserve a conservative block.
-      y -= 3.2 * IN; // reserved (actual proof height measured after placement)
-      y -= 0.18 * IN;
-    }
+    addRect(root, tX, rowTop, tW, ROW_H, false);
 
-    // manifest title + header
-    y -= MANIFEST_TITLE_GAP;
-    y -= MANIFEST_HDR_H;
-
-    // reserve signoff
-    var reservedBottom = BOT;
-    if (includeSign) reservedBottom += SIGN_TITLE_GAP + SIGN_H + 0.1 * IN;
-
-    var available = y - reservedBottom;
-    var rows = Math.floor(available / ROW_H);
-    return rows < 0 ? 0 : rows;
-  }
-
-  // We'll do a practical approach:
-  // - Page 1: header + details + proof + manifest header + rows + (signoff only if last page)
-  // - Continuation pages: header + details + manifest header + rows (no proof)
-  // - Last page: includes signoff under the manifest
-  // Determine rows per page by iterative pagination:
-  var pages = [];
-  var idx = 0;
-
-  // rough split: assume proof uses ~3" vertical; compute page 1 capacity conservative
-  var firstCap = layoutCapacity(true, true);
-  if (firstCap < 1) firstCap = 1;
-
-  // We'll distribute; last page will have signoff; if more than one page, put signoff only on final.
-  // Compute continuation capacity (no proof, signoff only on last)
-  var contCap = layoutCapacity(false, true);
-  if (contCap < 1) contCap = 1;
-
-  // Split items
-  while (idx < items.length) {
-    var remaining = items.length - idx;
-    var cap = pages.length === 0 ? firstCap : contCap;
-    var take = Math.min(cap, remaining);
-    pages.push({ start: idx, count: take });
-    idx += take;
-  }
-
-  // Helper: add artboard to the right of existing doc content
-  function newArtboardRectToRight() {
-    // place new artboard to right of max existing bounds
-    var maxRight = -1e9;
-    var maxTop = 1e9;
-    for (var i = 0; i < doc.artboards.length; i++) {
-      var r = doc.artboards[i].artboardRect; // [left, top, right, bottom]
-      if (r[2] > maxRight) maxRight = r[2];
-      if (r[1] < maxTop) maxTop = r[1];
-    }
-    var left = maxRight + 0.5 * IN;
-    var top = doc.artboards[0].artboardRect[1]; // align top to first artboard top
-    return [left, top, left + PAGE_W, top - PAGE_H];
-  }
-
-  function drawSpecPage(layer, pageNum, isFirst, isLast, chunk) {
-    var y = TOP;
-    var x = X0;
-
-    // Header bar
-    var headerRect = addRect(layer, x, y, CONTENT_W, HEADER_H, true);
-    var headerTF = addText(
-      layer,
-      x + 0.18 * IN,
-      y - 0.12 * IN,
-      CONTENT_W - 0.36 * IN,
-      HEADER_H,
-      HEADER_TEXT,
-      14,
-      [255, 255, 255],
-      HUDSON
-    );
-
-    y -= HEADER_H + 0.12 * IN;
-
-    // Details table (2 rows, fixed width = 7.5")
-    var tableW = CONTENT_W;
-    var rowH = DETAILS_H / 2;
-
-    // outer box
-    addRect(layer, x, y, tableW, DETAILS_H, false);
-
-    // horizontal divider
-    addLine(layer, x, y - rowH, x + tableW, y - rowH);
-
-    // column plan: label + big value + label + unit label + unit blank (spanned like we set earlier)
-    // We'll mimic the latest 2-row approach:
-    // Row1: CUSTOMER: | customer spans across
-    // Row2: VEHICLE:  | vehicle spans | VEHICLE UNIT #: | blank
-    var c1 = 1.2 * IN,
-      c2 = 4.4 * IN,
-      c5 = 1.3 * IN,
-      c6 = 0.6 * IN;
-    // vertical lines
-    addLine(layer, x + c1, y, x + c1, y - DETAILS_H); // after first label col
-    addLine(layer, x + c1 + c2, y - rowH, x + c1 + c2, y - DETAILS_H); // only row2 split point (vehicle span ends early)
-    addLine(
-      layer,
-      x + tableW - (c5 + c6),
-      y - rowH,
-      x + tableW - (c5 + c6),
-      y - DETAILS_H
-    );
-    addLine(layer, x + tableW - c6, y - rowH, x + tableW - c6, y - DETAILS_H);
-
-    // Row 1 texts
-    addText(
-      layer,
-      x + 0.08 * IN,
-      y - 0.14 * IN,
-      c1 - 0.16 * IN,
-      rowH,
-      "CUSTOMER:",
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-    addText(
-      layer,
-      x + c1 + 0.08 * IN,
-      y - 0.14 * IN,
-      tableW - c1 - 0.16 * IN,
-      rowH,
-      details.customer,
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-
-    // Row 2 texts
-    var y2 = y - rowH;
-    addText(
-      layer,
-      x + 0.08 * IN,
-      y2 - 0.14 * IN,
-      c1 - 0.16 * IN,
-      rowH,
-      "VEHICLE:",
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-    addText(
-      layer,
-      x + c1 + 0.08 * IN,
-      y2 - 0.14 * IN,
-      c2 - 0.16 * IN,
-      rowH,
-      details.vehicle,
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-    addText(
-      layer,
-      x + tableW - (c5 + c6) + 0.08 * IN,
-      y2 - 0.14 * IN,
-      c5 - 0.16 * IN,
-      rowH,
-      "VEHICLE UNIT #:",
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-    // blank box is last col area; leave empty on purpose
-
-    y -= DETAILS_H + 0.18 * IN;
-
-    // Proof (only on first page)
-    if (isFirst) {
-      // Outer proof border box; place image centered inside with inner width 7.2"
-      addRect(layer, x, y, PROOF_OUTER_W, 0.01 * IN, false); // temp, will resize after placing
-
-      var placedProof = layer.placedItems.add();
-      placedProof.file = proofFile;
-
-      // Fit to inner width (7.2") and keep aspect; then build box around it with width 7.5"
-      // Determine current size
-      fitPlacedToBox(placedProof, PROOF_INNER_W, 1000 * IN);
-
-      // Center within outer width (7.5") with small side padding
-      var vbP = placedProof.visibleBounds;
-      var pW = vbP[2] - vbP[0];
-      var pH = vbP[1] - vbP[3];
-
-      var proofTop = y;
-      placedProof.left = toDocX(x + (PROOF_OUTER_W - pW) / 2);
-      placedProof.top = toDocY(proofTop);
-
-      // Make actual border box height = image height
-      var proofBoxH = pH;
-      // remove temp box and replace with correct
-      // (Illustrator doesn't let us resize a pathItem.rectangle easily by setting height? We'll recreate.)
-      // Border box sized to actual placed proof height
-      var proofBorder = addRect(
-        layer,
-        x,
-        proofTop,
-        PROOF_OUTER_W,
-        proofBoxH,
-        false
-      );
-
-      y = proofTop - proofBoxH - 0.18 * IN;
-    }
-
-    // PRINT MANIFEST title (underlined by drawing a line)
-    var titleTF = addText(
-      layer,
-      x,
-      y,
-      CONTENT_W,
-      0.25 * IN,
-      "PRINT MANIFEST",
-      11,
-      [0, 0, 0],
-      HUDSON
-    );
-    // underline
-    addLine(layer, x, y - 0.2 * IN, x + 1.7 * IN, y - 0.2 * IN);
-
-    y -= MANIFEST_TITLE_GAP;
-
-    // Manifest table header row
-    var tableX = x;
-    var tableY = y;
-
-    var tableW2 = CONTENT_W;
-    var hdrH = MANIFEST_HDR_H;
-
-    // header row box
-    addRect(layer, tableX, tableY, tableW2, hdrH, false);
-
-    // vertical lines for columns
-    var cx = tableX;
-    var cols = [COL_W.thumb, COL_W.name, COL_W.file, COL_W.qty, COL_W.done];
-    for (var c = 0; c < cols.length - 1; c++) {
+    cx = tX;
+    for (c = 0; c < cols.length - 1; c++) {
       cx += cols[c];
-      addLine(layer, cx, tableY, cx, tableY - hdrH);
+      addLine(root, cx, rowTop, cx, rowTop - ROW_H);
     }
 
-    // header texts
-    var hx = tableX;
-    addText(
-      layer,
-      hx + 0.08 * IN,
-      tableY - 0.12 * IN,
-      cols[0] - 0.16 * IN,
-      hdrH,
-      "THUMBNAIL",
-      9,
-      [0, 0, 0],
-      HUDSON
-    );
-    hx += cols[0];
-    addText(
-      layer,
-      hx + 0.08 * IN,
-      tableY - 0.12 * IN,
+    var thumbGroup = root.groupItems.add();
+    thumbGroup.name = "__thumb_" + (r + 1) + "__";
+    duplicateArtboardArtworkToGroup(it.abIndex, thumbGroup, "SPEC SHEET (V1)");
+    fitGroupToBox(thumbGroup, THUMB_BOX_W, THUMB_BOX_H);
+    centerGroupInBox(thumbGroup, tX, rowTop, cols[0], ROW_H);
+    rasterizeItem(thumbGroup);
+
+    var textTop = rowTop - 0.14 * IN;
+    var nameText = String(it.name || "").toUpperCase();
+    var fileText = String(it.name || "").toUpperCase();
+    var qtyText = String(it.qty);
+
+    var tx = tX + cols[0];
+    addAreaText(
+      root,
+      tx + 0.08 * IN,
+      textTop,
       cols[1] - 0.16 * IN,
-      hdrH,
-      "NAME",
+      ROW_H,
+      nameText,
       9,
       [0, 0, 0],
-      HUDSON
+      HUDSON,
     );
-    hx += cols[1];
-    addText(
-      layer,
-      hx + 0.08 * IN,
-      tableY - 0.12 * IN,
+    tx += cols[1];
+    addAreaText(
+      root,
+      tx + 0.08 * IN,
+      textTop,
       cols[2] - 0.16 * IN,
-      hdrH,
-      "FILE NAME",
+      ROW_H,
+      fileText,
       9,
       [0, 0, 0],
-      HUDSON
+      HUDSON,
     );
-    hx += cols[2];
-    addText(
-      layer,
-      hx + 0.1 * IN,
-      tableY - 0.12 * IN,
+    tx += cols[2];
+    addAreaText(
+      root,
+      tx + 0.1 * IN,
+      textTop,
       cols[3] - 0.2 * IN,
-      hdrH,
-      "QTY",
+      ROW_H,
+      qtyText,
       9,
       [0, 0, 0],
-      HUDSON
-    );
-    hx += cols[3];
-    addText(
-      layer,
-      hx + 0.08 * IN,
-      tableY - 0.12 * IN,
-      cols[4] - 0.16 * IN,
-      hdrH,
-      "DONE",
-      9,
-      [0, 0, 0],
-      HUDSON
+      HUDSON,
     );
 
-    y = tableY - hdrH;
-
-    // body rows
-    for (var r = 0; r < chunk.count; r++) {
-      var item = items[chunk.start + r];
-      var rowTop = y;
-
-      // row outer rect
-      addRect(layer, tableX, rowTop, tableW2, ROW_H, false);
-
-      // vertical lines
-      cx = tableX;
-      for (c = 0; c < cols.length - 1; c++) {
-        cx += cols[c];
-        addLine(layer, cx, rowTop, cx, rowTop - ROW_H);
-      }
-
-      // thumbnail
-      var thumbPlaced = layer.placedItems.add();
-      thumbPlaced.file = item.png;
-      fitPlacedToBox(thumbPlaced, THUMB_BOX_W, THUMB_BOX_H);
-      centerPlacedInCell(thumbPlaced, tableX, rowTop, cols[0], ROW_H);
-
-      // NAME + FILE + QTY text (top aligned feel: set top slightly below rowTop)
-      var textTop = rowTop - 0.14 * IN;
-      var nameText = (item.name || "").toUpperCase();
-      var fileText = (item.name || "").toUpperCase(); // no folder paths in AI mode
-      var qtyText = String(item.qty);
-
-      var tx = tableX + cols[0];
-      addText(
-        layer,
-        tx + 0.08 * IN,
-        textTop,
-        cols[1] - 0.16 * IN,
-        ROW_H,
-        nameText,
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      tx += cols[1];
-      addText(
-        layer,
-        tx + 0.08 * IN,
-        textTop,
-        cols[2] - 0.16 * IN,
-        ROW_H,
-        fileText,
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      tx += cols[2];
-      addText(
-        layer,
-        tx + 0.1 * IN,
-        textTop,
-        cols[3] - 0.2 * IN,
-        ROW_H,
-        qtyText,
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-
-      y -= ROW_H;
-    }
-
-    // Sign-off only on last page
-    if (isLast) {
-      y -= SIGN_TITLE_GAP;
-
-      var signTitle = addText(
-        layer,
-        x,
-        y,
-        CONTENT_W,
-        0.25 * IN,
-        "INSTALL SIGN-OFF",
-        11,
-        [0, 0, 0],
-        HUDSON
-      );
-      addLine(layer, x, y - 0.2 * IN, x + 1.75 * IN, y - 0.2 * IN);
-
-      y -= 0.28 * IN;
-
-      // sign table 2 rows
-      var signW = CONTENT_W;
-      var signX = x;
-      var signTop = y;
-
-      var widths = [1.3 * IN, 2.2 * IN, 1.1 * IN, 0.9 * IN, 0.7 * IN, 1.3 * IN];
-      var signRow1 = 0.35 * IN;
-      var signRow2 = 1.2 * IN;
-      var signH = signRow1 + signRow2;
-
-      addRect(layer, signX, signTop, signW, signH, false);
-      addLine(
-        layer,
-        signX,
-        signTop - signRow1,
-        signX + signW,
-        signTop - signRow1
-      );
-
-      // verticals row1
-      cx = signX;
-      for (c = 0; c < widths.length - 1; c++) {
-        cx += widths[c];
-        addLine(layer, cx, signTop, cx, signTop - signRow1);
-      }
-      // verticals row2: only first column; rest is spanned
-      addLine(
-        layer,
-        signX + widths[0],
-        signTop - signRow1,
-        signX + widths[0],
-        signTop - signH
-      );
-
-      // row1 text
-      var sx = signX;
-      addText(
-        layer,
-        sx + 0.08 * IN,
-        signTop - 0.11 * IN,
-        widths[0] - 0.16 * IN,
-        signRow1,
-        "INSTALLED BY:",
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      sx += widths[0];
-      // blank cell (no underscores)
-      sx += widths[1];
-      addText(
-        layer,
-        sx + 0.08 * IN,
-        signTop - 0.11 * IN,
-        widths[2] - 0.16 * IN,
-        signRow1,
-        "PHOTOS TAKEN:",
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      sx += widths[2];
-      addText(
-        layer,
-        sx + 0.1 * IN,
-        signTop - 0.11 * IN,
-        widths[3] - 0.2 * IN,
-        signRow1,
-        "YES   NO",
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      sx += widths[3];
-      addText(
-        layer,
-        sx + 0.08 * IN,
-        signTop - 0.11 * IN,
-        widths[4] - 0.16 * IN,
-        signRow1,
-        "DATE:",
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      sx += widths[4];
-      // blank cell (no underscores)
-
-      // row2 label
-      addText(
-        layer,
-        signX + 0.08 * IN,
-        signTop - signRow1 - 0.14 * IN,
-        widths[0] - 0.16 * IN,
-        signRow2,
-        "ISSUES / DAMAGE NOTES:",
-        9,
-        [0, 0, 0],
-        HUDSON
-      );
-      // rest is blank by design
-    }
+    y -= ROW_H;
   }
 
-  // Create pages/artboards + layers
-  var createdArtboards = [];
-  var firstNewIdx = doc.artboards.length;
+  // Sign-off
+  y -= SIGN_TITLE_GAP;
+  addAreaText(
+    root,
+    pageLeft + X0,
+    y,
+    CONTENT_W,
+    SIGN_TITLE_H,
+    "INSTALL SIGN-OFF",
+    11,
+    [0, 0, 0],
+    HUDSON,
+  );
+  addLine(
+    root,
+    pageLeft + X0,
+    y - 0.2 * IN,
+    pageLeft + X0 + 1.75 * IN,
+    y - 0.2 * IN,
+  );
+  y -= SIGN_TITLE_H;
+  y -= SIGN_TABLE_GAP;
 
-  for (var p = 0; p < pages.length; p++) {
-    var rect = newArtboardRectToRight();
-    doc.artboards.add(rect);
-    var abIdx = doc.artboards.length - 1;
-    doc.artboards[abIdx].name =
-      p === 0 ? "SPEC SHEET (V1)" : "SPEC SHEET (V1) — Pg " + (p + 1);
-    createdArtboards.push(abIdx);
+  var signX = pageLeft + X0;
+  var signTop = y;
+  var signW = CONTENT_W;
 
-    // Make a new layer for each page for cleanliness
-    var layer = doc.layers.add();
-    layer.name = doc.artboards[abIdx].name;
+  var widths = [1.3 * IN, 2.2 * IN, 1.1 * IN, 0.9 * IN, 0.7 * IN, 1.3 * IN];
+  var signRow1 = 0.35 * IN;
+  var signRow2 = 1.2 * IN;
+  var signH = signRow1 + signRow2;
 
-    // Activate artboard so coordinates are aligned to it
-    doc.artboards.setActiveArtboardIndex(abIdx);
+  addRect(root, signX, signTop, signW, signH, false);
+  addLine(root, signX, signTop - signRow1, signX + signW, signTop - signRow1);
 
-    // translate everything to this artboard's coordinate space
-    // We'll work in artboard-local by offsetting with artboardRect left/top.
-    var abRect = doc.artboards[abIdx].artboardRect; // [L, T, R, B]
-    __AB_LEFT = abRect[0];
-    __AB_TOP = abRect[1];
-    // Create a group and shift by artboard origin
-    var g = layer.groupItems.add();
-    g.left = abRect[0];
-    g.top = abRect[1];
-
-    // Draw into group as "layer" stand-in by temporarily creating items on layer then moving
-    // Simpler: draw directly on layer but offset x,y by abRect[0],abRect[1]
-    // We'll just add offsets:
-    var oldAddRect = addRect;
-    var oldAddLine = addLine;
-    var oldAddText = addText;
-
-    function addRectO(layerRef, x, yTop, w, h, fill) {
-      return oldAddRect(
-        layerRef,
-        abRect[0] + x,
-        abRect[1] - (PAGE_H - yTop),
-        w,
-        h,
-        fill
-      );
-    }
-    function addLineO(layerRef, x1, y1, x2, y2) {
-      return oldAddLine(
-        layerRef,
-        abRect[0] + x1,
-        abRect[1] - (PAGE_H - y1),
-        abRect[0] + x2,
-        abRect[1] - (PAGE_H - y2)
-      );
-    }
-    function addTextO(layerRef, x, yTop, w, h, s, size, rgb, fontObj, align) {
-      return oldAddText(
-        layerRef,
-        abRect[0] + x,
-        abRect[1] - (PAGE_H - yTop),
-        w,
-        h,
-        s,
-        size,
-        rgb,
-        fontObj,
-        align
-      );
-    }
-    // override globals used by drawSpecPage
-    addRect = addRectO;
-    addLine = addLineO;
-    addText = addTextO;
-
-    drawSpecPage(layer, p + 1, p === 0, p === pages.length - 1, pages[p]);
-
-    // restore
-    addRect = oldAddRect;
-    addLine = oldAddLine;
-    addText = oldAddText;
+  cx = signX;
+  for (c = 0; c < widths.length - 1; c++) {
+    cx += widths[c];
+    addLine(root, cx, signTop, cx, signTop - signRow1);
   }
+  addLine(
+    root,
+    signX + widths[0],
+    signTop - signRow1,
+    signX + widths[0],
+    signTop - signH,
+  );
 
-  alert("Created " + pages.length + " SPEC SHEET (V1) artboard(s).");
+  var sx = signX;
+  addAreaText(
+    root,
+    sx + 0.08 * IN,
+    signTop - 0.11 * IN,
+    widths[0] - 0.16 * IN,
+    signRow1,
+    "INSTALLED BY:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  sx += widths[0] + widths[1];
+  addAreaText(
+    root,
+    sx + 0.08 * IN,
+    signTop - 0.11 * IN,
+    widths[2] - 0.16 * IN,
+    signRow1,
+    "PHOTOS TAKEN:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  sx += widths[2];
+  addAreaText(
+    root,
+    sx + 0.1 * IN,
+    signTop - 0.11 * IN,
+    widths[3] - 0.2 * IN,
+    signRow1,
+    "YES   NO",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+  sx += widths[3];
+  addAreaText(
+    root,
+    sx + 0.08 * IN,
+    signTop - 0.11 * IN,
+    widths[4] - 0.16 * IN,
+    signRow1,
+    "DATE:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+
+  addAreaText(
+    root,
+    signX + 0.08 * IN,
+    signTop - signRow1 - 0.14 * IN,
+    widths[0] - 0.16 * IN,
+    signRow2,
+    "ISSUES / DAMAGE NOTES:",
+    9,
+    [0, 0, 0],
+    HUDSON,
+  );
+
+  // Critical: expand the artboard so nothing hangs off the bottom
+  expandArtboardToFitContent(specAbIdx, root);
+
+  try {
+    specLayer.zOrder(ZOrderMethod.BRINGTOFRONT);
+  } catch (eZ) {}
 })();
